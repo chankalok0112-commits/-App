@@ -191,7 +191,10 @@
       };
 
       const handleExplicitReview = async (days) => {
-        if (!user) return;
+        if (!user) {
+          showToast('⚠️ 錯誤：雲端未連線！請確保已在程式碼中設定 Firebase 金鑰。');
+          return;
+        }
         const currentCard = studyQueue[currentStudyIndex];
         const nextReviewDate = new Date();
         const intervalDays = parseInt(days, 10);
@@ -217,8 +220,16 @@
 
       // --- 新增與刪除 ---
       const handleAddSingleCard = async (e) => {
-        e.preventDefault();
-        if (!newQuestion.trim() || !newAnswer.trim() || !user) return;
+        if (e && e.preventDefault) e.preventDefault();
+        
+        if (!newQuestion.trim() || !newAnswer.trim()) {
+          showToast('❌ 請完整填寫問題與答案！');
+          return;
+        }
+        if (!user) {
+          showToast('⚠️ 無法儲存：雲端未連線！請確保已在程式碼中設定 Firebase 金鑰。');
+          return;
+        }
 
         const newCard = {
           id: Date.now().toString(),
@@ -237,7 +248,14 @@
       };
 
       const handleBatchImport = async () => {
-        if (!batchText.trim() || !user) return;
+        if (!batchText.trim()) {
+          showToast('❌ 請輸入要匯入的內容！');
+          return;
+        }
+        if (!user) {
+          showToast('⚠️ 無法儲存：雲端未連線！請確保已在程式碼中設定 Firebase 金鑰。');
+          return;
+        }
         const lines = batchText.split('\n');
         let count = 0;
         
@@ -474,19 +492,19 @@
               </div>
 
               {addMode === 'single' ? (
-                <form onSubmit={handleAddSingleCard} className="space-y-6 mt-6">
+                <div className="space-y-6 mt-6">
                   <div>
                     <label className="block text-base md:text-lg font-medium text-gray-700 mb-2">Question (問題)</label>
-                    <textarea required rows="2" value={newQuestion} onChange={(e) => setNewQuestion(e.target.value)} className="w-full border border-gray-300 rounded-xl p-4 text-base md:text-lg focus:ring-2 focus:ring-blue-500 resize-none" placeholder="輸入考點..." />
+                    <textarea rows="2" value={newQuestion} onChange={(e) => setNewQuestion(e.target.value)} className="w-full border border-gray-300 rounded-xl p-4 text-base md:text-lg focus:ring-2 focus:ring-blue-500 resize-none" placeholder="輸入考點..." />
                   </div>
                   <div>
                     <label className="block text-base md:text-lg font-medium text-gray-700 mb-2">Answer (答案)</label>
-                    <textarea required rows="4" value={newAnswer} onChange={(e) => setNewAnswer(e.target.value)} className="w-full border border-gray-300 rounded-xl p-4 text-base md:text-lg focus:ring-2 focus:ring-blue-500 resize-none" placeholder="輸入答案..." />
+                    <textarea rows="4" value={newAnswer} onChange={(e) => setNewAnswer(e.target.value)} className="w-full border border-gray-300 rounded-xl p-4 text-base md:text-lg focus:ring-2 focus:ring-blue-500 resize-none" placeholder="輸入答案..." />
                   </div>
-                  <button type="submit" className="w-full bg-gray-900 text-white font-bold py-4 md:py-5 text-lg md:text-xl rounded-xl hover:bg-gray-800 transition-colors shadow-lg mt-4 cursor-pointer">
+                  <button type="button" onClick={handleAddSingleCard} className="w-full bg-gray-900 text-white font-bold py-4 md:py-5 text-lg md:text-xl rounded-xl hover:bg-gray-800 transition-colors shadow-lg mt-4 cursor-pointer">
                     儲存卡片 (Save)
                   </button>
-                </form>
+                </div>
               ) : (
                 <div className="space-y-6">
                   <div className="bg-blue-50 p-4 md:p-5 rounded-xl text-base text-blue-800 flex items-start border border-blue-100">
