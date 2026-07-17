@@ -1,0 +1,737 @@
+import React, { useState, useEffect } from 'react';
+import { Brain, Plus, Home, Calendar as CalendarIcon, Clock, ChevronLeft, ChevronRight, Bell, BarChart2, List, FileText, CheckCircle, Trash2, Info, Settings, Download, Upload } from 'lucide-react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
+
+// --- Firebase 初始化 ---
+const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+// 整理後的科目順序 (核心科 -> 選修科)
+const SUBJECTS = [
+  'Chinese (中文)',
+  'English (英文)',
+  'Mathematics (數學)',
+  'Chemistry (化學)',
+  'History (歷史)',
+  'M2'
+];
+
+// 定義 3 套溫習系統
+const REVIEW_SYSTEMS = {
+  intense: { id: 'intense', name: '🔥 密集型', intervals: [1, 3, 7], labels: ['1 天', '3 天', '1 星期'], desc: '適合化學、M2等需要高頻記憶的知識。' },
+  standard: { id: 'standard', name: '📚 標準型', intervals: [1, 7, 30], labels: ['1 天', '1 星期', '1 個月'], desc: '適合數學、中英文核心概念，穩打穩紮。' },
+  macro: { id: 'macro', name: '🌍 宏觀型', intervals: [3, 14, 30], labels: ['3 天', '2 星期', '1 個月'], desc: '適合歷史等大概念，重溫整體脈絡。' }
+};
+
+export default function App() {
+  // --- 狀態管理 ---
+  const [user, setUser] = useState(null);
+  const [cards, setCards] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  
+  const [view, setView] = useState('dashboard'); // 'dashboard', 'study', 'add', 'calendar', 'analytics', 'settings'
+  const [studyQueue, setStudyQueue] = useState([]);
+  const [currentStudyIndex, setCurrentStudyIndex] = useState(0);
+  const [isFlipped, setIsFlipped] = useState(false);
+  const [showCustomInput, setShowCustomInput] = useState(false);
+  const [customDays, setCustomDays] = useState('');
+  const [toast, setToast] = useState('');
+
+  // 日曆狀態
+  const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [selectedDate, setSelectedDate] = useState(new Date().setHours(0, 0, 0, 0));
+
+  // 表單狀態
+  const [addMode, setAddMode] = useState('single'); // 'single', 'batch'
+  const [newSubject, setNewSubject] = useState(SUBJECTS[0]);
+  const [newQuestion, setNewQuestion] = useState('');
+  const [newAnswer, setNewAnswer] = useState('');
+  const [newSystem, setNewSystem] = useState('standard');
+  const [batchText, setBatchText] = useState('');
+  const [importText, setImportText] = useState(''); // 新增還原文字狀態
+
+  const [notificationPermission, setNotificationPermission] = useState('default');
+
+  // --- Firebase Auth & Data Fetching ---
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (error) {
+        console.error("Auth error:", error);
+      }
+    };
+    initAuth();
+    
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      if (!currentUser) setIsLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    
+    const cardsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'flashcards');
+    const unsubscribe = onSnapshot(cardsRef, (snapshot) => {
+      const fetchedCards = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
+      // 如果第一次進來完全沒有資料，注入預設卡片作為示範
+      if (snapshot.empty && !sessionStorage.getItem('demo_injected')) {
+        sessionStorage.setItem('demo_injected', 'true');
+        injectDemoCards(user.uid);
+      } else {
+        setCards(fetchedCards);
+        setIsLoading(false);
+      }
+    }, (error) => {
+      console.error("Firestore error:", error);
+      setIsLoading(false);
+    });
+    
+    return () => unsubscribe();
+  }, [user]);
+
+  const injectDemoCards = async (uid) => {
+    const demoCards = [
+      { id: Date.now().toString(), subject: 'Chemistry (化學)', question: 'Esterification (酯化反應) 需要什麼 conditions (條件)？', answer: '1. Concentrated sulphuric acid (濃硫酸) 作為 catalyst\n2. Heating under reflux (回流加熱)', nextReviewDate: new Date().setHours(0, 0, 0, 0), system: 'intense', currentInterval: 0 },
+      { id: (Date.now() + 1).toString(), subject: 'Mathematics (數學)', question: '什麼是 Discriminant (判別式) Δ 的公式？', answer: 'Δ = b² - 4ac', nextReviewDate: new Date().setHours(0, 0, 0, 0), system: 'standard', currentInterval: 0 }
+    ];
+    for (const card of demoCards) {
+      await setDoc(doc(db, 'artifacts', appId, 'users', uid, 'flashcards', card.id), card);
+    }
+  };
+
+  // --- 通知與排程 ---
+  useEffect(() => {
+    if ('Notification' in window) {
+      setNotificationPermission(Notification.permission);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (view === 'dashboard' && !isLoading) {
+      const today = new Date().setHours(0, 0, 0, 0);
+      const dueCards = cards.filter(card => card.nextReviewDate <= today);
+      setStudyQueue(dueCards);
+
+      if (notificationPermission === 'granted' && dueCards.length > 0 && !sessionStorage.getItem('notified_today')) {
+        new Notification('HKDSE 記憶大師', { body: `同學，你今天有 ${dueCards.length} 條 DSE 考點需要溫習！(Keep going!)` });
+        sessionStorage.setItem('notified_today', 'true');
+      }
+    }
+  }, [view, cards, isLoading, notificationPermission]);
+
+  const showToast = (msg) => {
+    setToast(msg);
+    setTimeout(() => setToast(''), 3000);
+  };
+
+  const requestNotificationPermission = () => {
+    if (!('Notification' in window)) {
+      showToast('你的瀏覽器不支援通知功能。');
+      return;
+    }
+    Notification.requestPermission().then((permission) => {
+      setNotificationPermission(permission);
+      if(permission === 'granted') showToast('已開啟溫習提醒！');
+    });
+  };
+
+  // --- 學習邏輯 ---
+  const startStudying = () => {
+    if (studyQueue.length > 0) {
+      setCurrentStudyIndex(0);
+      setIsFlipped(false);
+      setShowCustomInput(false);
+      setView('study');
+    }
+  };
+
+  const handleExplicitReview = async (days) => {
+    if (!user) return;
+    const currentCard = studyQueue[currentStudyIndex];
+    const nextReviewDate = new Date();
+    const intervalDays = parseInt(days, 10);
+    nextReviewDate.setDate(nextReviewDate.getDate() + intervalDays);
+    nextReviewDate.setHours(0, 0, 0, 0);
+
+    // 寫入 Firestore (同時更新 currentInterval 供數據分析使用)
+    const cardRef = doc(db, 'artifacts', appId, 'users', user.uid, 'flashcards', currentCard.id.toString());
+    await setDoc(cardRef, { 
+      ...currentCard, 
+      nextReviewDate: nextReviewDate.getTime(),
+      currentInterval: intervalDays 
+    });
+
+    if (currentStudyIndex + 1 < studyQueue.length) {
+      setCurrentStudyIndex(currentStudyIndex + 1);
+      setIsFlipped(false);
+      setShowCustomInput(false);
+    } else {
+      setView('dashboard');
+      showToast('🎉 恭喜完成今日溫習任務！');
+    }
+  };
+
+  // --- 新增卡片邏輯 ---
+  const handleAddSingleCard = async (e) => {
+    e.preventDefault();
+    if (!newQuestion.trim() || !newAnswer.trim() || !user) return;
+
+    const newCard = {
+      id: Date.now().toString(),
+      subject: newSubject,
+      question: newQuestion,
+      answer: newAnswer,
+      nextReviewDate: new Date().setHours(0, 0, 0, 0),
+      system: newSystem,
+      currentInterval: 0 // 初始為 0
+    };
+
+    await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'flashcards', newCard.id), newCard);
+    
+    setNewQuestion('');
+    setNewAnswer('');
+    showToast('✅ 成功新增 1 張卡片');
+  };
+
+  const handleBatchImport = async () => {
+    if (!batchText.trim() || !user) return;
+    
+    const lines = batchText.split('\n');
+    let count = 0;
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.includes('---')) {
+        const [q, a] = line.split('---');
+        if (q.trim() && a.trim()) {
+          const newCard = {
+            id: (Date.now() + count).toString(),
+            subject: newSubject,
+            question: q.trim(),
+            answer: a.trim(),
+            nextReviewDate: new Date().setHours(0, 0, 0, 0),
+            system: newSystem,
+            currentInterval: 0
+          };
+          await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'flashcards', newCard.id), newCard);
+          count++;
+        }
+      }
+    }
+    
+    if (count > 0) {
+      setBatchText('');
+      showToast(`✅ 成功批量匯入 ${count} 張卡片！`);
+      setView('dashboard');
+    } else {
+      showToast('❌ 匯入失敗：請確保格式為「問題 --- 答案」');
+    }
+  };
+
+  const handleDeleteCard = async (cardId) => {
+    if (!user) return;
+    await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'flashcards', cardId.toString()));
+    showToast('🗑️ 卡片已刪除');
+  };
+
+  // --- 數據分析邏輯 ---
+  const getAnalytics = () => {
+    return SUBJECTS.map(sub => {
+      const subCards = cards.filter(c => c.subject === sub);
+      const total = subCards.length;
+      const mastered = subCards.filter(c => c.currentInterval >= 7).length;
+      const percentage = total === 0 ? 0 : Math.round((mastered / total) * 100);
+      return { subject: sub, total, mastered, percentage };
+    }).filter(stat => stat.total > 0); 
+  };
+
+
+  // --- 備份與還原邏輯 ---
+  const handleExport = () => {
+    const dataStr = JSON.stringify(cards, null, 2);
+    const textArea = document.createElement("textarea");
+    textArea.value = dataStr;
+    document.body.appendChild(textArea);
+    textArea.select();
+    try {
+      document.execCommand('copy');
+      showToast('✅ 備份資料已複製！請將它貼上到備忘錄 (Notes) 保存。');
+    } catch (err) {
+      showToast('❌ 自動複製失敗，請手動複製下方文字。');
+      setImportText(dataStr);
+    }
+    document.body.removeChild(textArea);
+  };
+
+  const handleImport = async () => {
+    if (!importText.trim() || !user) return;
+    try {
+      const importedCards = JSON.parse(importText);
+      if (!Array.isArray(importedCards)) throw new Error("Format error");
+      
+      let count = 0;
+      for (const card of importedCards) {
+        if (card.id && card.question && card.answer) {
+          await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'flashcards', card.id.toString()), card);
+          count++;
+        }
+      }
+      setImportText('');
+      showToast(`✅ 成功還原 ${count} 張卡片！`);
+      setView('dashboard');
+    } catch (error) {
+      showToast('❌ 匯入失敗：資料格式不正確');
+    }
+  };
+
+  // --- UI 組件 ---
+  if (isLoading) {
+    return <div className="min-h-screen flex items-center justify-center bg-slate-50 text-blue-600 font-bold">載入雲端資料中...</div>;
+  }
+
+  const renderDashboard = () => (
+    <div className="flex flex-col items-center justify-center h-full space-y-6 animate-in fade-in zoom-in duration-300">
+      <div className="bg-white p-8 rounded-2xl shadow-lg text-center max-w-md w-full relative">
+        <button 
+          onClick={requestNotificationPermission}
+          className={`absolute top-4 right-4 p-2 rounded-full transition-colors ${notificationPermission === 'granted' ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-400 hover:bg-blue-50 hover:text-blue-500'}`}
+        >
+          <Bell className="w-5 h-5" />
+        </button>
+
+        <div className="bg-blue-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
+          <Brain className="text-blue-600 w-10 h-10" />
+        </div>
+        <h2 className="text-2xl font-bold text-gray-800 mb-2">HKDSE 記憶大師</h2>
+        <p className="text-gray-500 mb-6 text-sm">雲端進度已同步，專注於今天的任務即可。</p>
+        
+        <div className="bg-gray-50 rounded-xl p-6 mb-6 border border-gray-100">
+          <p className="text-5xl font-extrabold text-blue-600 mb-2">{studyQueue.length}</p>
+          <p className="text-sm font-medium text-gray-500">張卡片今日需溫習 (Due Today)</p>
+        </div>
+
+        <button 
+          onClick={startStudying}
+          disabled={studyQueue.length === 0}
+          className={`w-full py-4 rounded-xl font-bold text-white transition-all text-lg ${
+            studyQueue.length > 0 ? 'bg-gray-900 hover:bg-gray-800 shadow-xl transform hover:-translate-y-1' : 'bg-gray-300 cursor-not-allowed'
+          }`}
+        >
+          {studyQueue.length > 0 ? '開始今日溫習 (Start Studying)' : '今日任務已清空 🎉'}
+        </button>
+      </div>
+    </div>
+  );
+
+  const renderStudy = () => {
+    const card = studyQueue[currentStudyIndex];
+    const system = REVIEW_SYSTEMS[card.system] || REVIEW_SYSTEMS.standard;
+
+    return (
+      <div className="flex flex-col items-center justify-center h-full max-w-2xl mx-auto px-4 pb-10">
+        <div className="w-full flex justify-between items-center mb-6 text-gray-500">
+          <span className="font-medium">進度: {currentStudyIndex + 1} / {studyQueue.length}</span>
+          <div className="flex space-x-2">
+            <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-bold">{card.subject}</span>
+            <span className="bg-gray-100 text-gray-600 px-3 py-1 rounded-full text-xs font-bold">{system.name.split(' ')[1]}</span>
+          </div>
+        </div>
+
+        <div 
+          className={`w-full min-h-[280px] bg-white rounded-3xl shadow-xl p-8 flex flex-col justify-center items-center text-center cursor-pointer transition-all duration-300 transform ${isFlipped ? 'rotate-0' : ''}`}
+          onClick={() => !isFlipped && setIsFlipped(true)}
+        >
+          {!isFlipped ? (
+            <>
+              <h3 className="text-sm font-bold text-gray-400 mb-4 uppercase tracking-wider">Question</h3>
+              <p className="text-2xl font-medium text-gray-800 leading-relaxed whitespace-pre-wrap">{card.question}</p>
+              <p className="mt-8 text-sm text-gray-400 animate-pulse bg-gray-50 px-4 py-2 rounded-full">點擊卡片顯示答案</p>
+            </>
+          ) : (
+            <>
+              <h3 className="text-sm font-bold text-green-500 mb-4 uppercase tracking-wider">Answer</h3>
+              <p className="text-xl font-medium text-gray-800 leading-relaxed whitespace-pre-wrap">{card.answer}</p>
+            </>
+          )}
+        </div>
+
+        {isFlipped && (
+          <div className="w-full mt-8 bg-white p-5 rounded-2xl shadow-sm border border-gray-100 animate-in slide-in-from-bottom-4">
+            <p className="text-center text-sm text-gray-500 mb-4 font-medium flex justify-center items-center">
+              你想多久後再溫習？ <span className="ml-2 text-xs bg-gray-100 px-2 py-0.5 rounded text-gray-600">目前使用: {system.name}</span>
+            </p>
+            {!showCustomInput ? (
+              <div className="grid grid-cols-4 gap-3">
+                {system.intervals.map((days, index) => (
+                  <button key={days} onClick={() => handleExplicitReview(days)} className="flex flex-col items-center justify-center p-3 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl transition-colors">
+                    <span className="font-bold text-blue-700 text-sm whitespace-nowrap">{system.labels[index]}</span>
+                  </button>
+                ))}
+                <button onClick={() => setShowCustomInput(true)} className="flex flex-col items-center justify-center p-3 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-xl transition-colors">
+                  <Clock className="w-5 h-5 text-gray-500 mb-1" />
+                  <span className="font-bold text-gray-600 text-xs">自訂</span>
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center space-x-3 bg-gray-50 p-2 rounded-xl">
+                <input type="number" min="1" value={customDays} onChange={(e) => setCustomDays(e.target.value)} placeholder="輸入天數" className="flex-1 border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 focus:outline-none text-center" />
+                <span className="text-gray-600 font-medium whitespace-nowrap">天後</span>
+                <button onClick={() => { if(customDays && !isNaN(customDays) && customDays > 0) handleExplicitReview(customDays); }} className="bg-gray-900 text-white px-4 py-2 rounded-lg font-bold hover:bg-gray-800">確定</button>
+                <button onClick={() => setShowCustomInput(false)} className="bg-gray-200 text-gray-700 px-3 py-2 rounded-lg font-bold hover:bg-gray-300">返回</button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderAdd = () => (
+    <div className="flex flex-col items-center h-full max-w-xl mx-auto px-4 pb-10">
+      <div className="bg-white w-full rounded-2xl shadow-lg p-8">
+        <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center">
+          <Plus className="w-6 h-6 mr-2 text-blue-600" /> 新增考點卡片
+        </h2>
+
+        {/* 模式切換 */}
+        <div className="flex bg-gray-100 p-1 rounded-xl mb-6">
+          <button onClick={() => setAddMode('single')} className={`flex-1 py-2 font-bold text-sm rounded-lg transition-colors flex items-center justify-center ${addMode === 'single' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}>
+            <FileText className="w-4 h-4 mr-2" /> 單張新增
+          </button>
+          <button onClick={() => setAddMode('batch')} className={`flex-1 py-2 font-bold text-sm rounded-lg transition-colors flex items-center justify-center ${addMode === 'batch' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}>
+            <List className="w-4 h-4 mr-2" /> 批量匯入
+          </button>
+        </div>
+
+        <div className="space-y-5">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Subject (科目)</label>
+            <select value={newSubject} onChange={(e) => setNewSubject(e.target.value)} className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 bg-white">
+              {SUBJECTS.map(sub => <option key={sub} value={sub}>{sub}</option>)}
+            </select>
+          </div>
+          
+          {/* 直觀的系統選擇卡片 (Radio Cards) */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">System (溫習系統選擇)</label>
+            <div className="space-y-2">
+              {Object.values(REVIEW_SYSTEMS).map(sys => (
+                <div 
+                  key={sys.id} 
+                  onClick={() => setNewSystem(sys.id)}
+                  className={`flex items-start p-3 border rounded-xl cursor-pointer transition-all ${newSystem === sys.id ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500' : 'border-gray-200 hover:bg-gray-50'}`}
+                >
+                  <input 
+                    type="radio" 
+                    checked={newSystem === sys.id} 
+                    onChange={() => {}} 
+                    className="mt-1 mr-3 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                  />
+                  <div>
+                    <div className="font-bold text-gray-800">{sys.name}</div>
+                    <div className="text-xs text-gray-500 mt-1">{sys.desc}</div>
+                    <div className="text-xs font-semibold text-blue-600 mt-1">節奏: {sys.labels.join(' ➔ ')}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {addMode === 'single' ? (
+            <form onSubmit={handleAddSingleCard} className="space-y-5 mt-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Question (問題)</label>
+                <textarea required rows="2" value={newQuestion} onChange={(e) => setNewQuestion(e.target.value)} className="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 resize-none" placeholder="輸入考點..." />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Answer (答案)</label>
+                <textarea required rows="3" value={newAnswer} onChange={(e) => setNewAnswer(e.target.value)} className="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 resize-none" placeholder="輸入答案..." />
+              </div>
+              <button type="submit" className="w-full bg-gray-900 text-white font-bold py-3.5 rounded-xl hover:bg-gray-800 transition-colors shadow-md mt-2">
+                儲存卡片 (Save)
+              </button>
+            </form>
+          ) : (
+            <div className="space-y-4">
+              <div className="bg-blue-50 p-3 rounded-lg text-sm text-blue-800 flex items-start border border-blue-100">
+                <Info className="w-5 h-5 mr-2 flex-shrink-0 mt-0.5 text-blue-500" />
+                <p>請使用 <strong>---</strong> 分隔問題與答案，每組一列。<br/><span className="text-xs text-blue-600 mt-1 block">範例：<br/>什麼是 GDP？ --- 國內生產總值<br/>Esterification 的催化劑？ --- 濃硫酸</span></p>
+              </div>
+              <textarea 
+                rows="6" 
+                value={batchText} 
+                onChange={(e) => setBatchText(e.target.value)} 
+                className="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 resize-none font-mono text-sm" 
+                placeholder="問題 1 --- 答案 1&#10;問題 2 --- 答案 2" 
+              />
+              <button onClick={handleBatchImport} className="w-full bg-blue-600 text-white font-bold py-3.5 rounded-xl hover:bg-blue-700 transition-colors shadow-md">
+                一鍵批量匯入 (Batch Import)
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderAnalytics = () => {
+    const stats = getAnalytics();
+    
+    return (
+      <div className="flex flex-col h-full w-full pb-10 max-w-lg mx-auto px-4">
+        <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center">
+          <BarChart2 className="w-6 h-6 mr-2 text-blue-600" /> 弱點分析 (Analytics)
+        </h2>
+        
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-6">
+          <p className="text-sm text-gray-500 mb-4">
+            「精通度」代表你對該科目的掌握程度（卡片間隔時間達到 7 天以上）。努力將弱勢科目的進度條推向 100% 吧！
+          </p>
+          
+          {stats.length === 0 ? (
+            <div className="text-center text-gray-400 py-4 font-medium">目前尚無足夠數據，請先新增並溫習卡片！</div>
+          ) : (
+            <div className="space-y-5">
+              {stats.map(stat => (
+                <div key={stat.subject}>
+                  <div className="flex justify-between items-end mb-1">
+                    <span className="font-bold text-gray-800 text-sm">{stat.subject}</span>
+                    <span className="text-xs font-bold text-gray-500">{stat.mastered} / {stat.total} 題 ({stat.percentage}%)</span>
+                  </div>
+                  <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden">
+                    <div 
+                      className={`h-3 rounded-full transition-all duration-1000 ${
+                        stat.percentage >= 80 ? 'bg-green-500' : stat.percentage >= 50 ? 'bg-blue-500' : 'bg-orange-500'
+                      }`}
+                      style={{ width: `${stat.percentage}%` }}
+                    ></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+           <h3 className="text-lg font-bold text-gray-800 mb-4">全部題庫管理</h3>
+           <div className="max-h-60 overflow-y-auto space-y-2 pr-2">
+             {cards.length === 0 ? <p className="text-gray-400 text-sm">暫無卡片</p> : 
+               cards.map(card => (
+                 <div key={card.id} className="flex justify-between items-center bg-gray-50 p-3 rounded-lg border border-gray-100">
+                   <div className="flex-1 truncate pr-4">
+                     <span className="text-xs text-blue-600 font-bold bg-blue-100 px-2 py-0.5 rounded mr-2">{card.subject.split(' ')[0]}</span>
+                     <span className="text-sm text-gray-700">{card.question}</span>
+                   </div>
+                   <button onClick={() => handleDeleteCard(card.id)} className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+                     <Trash2 className="w-4 h-4" />
+                   </button>
+                 </div>
+               ))
+             }
+           </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderCalendar = () => {
+    const year = currentMonth.getFullYear();
+    const month = currentMonth.getMonth();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const firstDayOfMonth = new Date(year, month, 1).getDay();
+    
+    const daysArray = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+    const blanksArray = Array.from({ length: firstDayOfMonth }, (_, i) => i);
+
+    const cardsForSelectedDate = cards.filter(card => new Date(card.nextReviewDate).setHours(0,0,0,0) === selectedDate);
+
+    const nextMonth = () => setCurrentMonth(new Date(year, month + 1, 1));
+    const prevMonth = () => setCurrentMonth(new Date(year, month - 1, 1));
+
+    return (
+      <div className="flex flex-col h-full w-full pb-10 max-w-lg mx-auto">
+        <h2 className="text-2xl font-bold text-gray-800 mb-4 flex items-center px-4">
+          <CalendarIcon className="w-6 h-6 mr-2 text-blue-600" /> 溫習日曆 (Schedule)
+        </h2>
+        
+        <div className="px-4 mb-6">
+          <div className="bg-white rounded-t-2xl shadow-sm border border-gray-100 p-4 pb-0">
+            <div className="flex justify-between items-center mb-4">
+              <button onClick={prevMonth} className="p-2 hover:bg-gray-100 rounded-full"><ChevronLeft className="w-5 h-5 text-gray-600" /></button>
+              <h3 className="text-lg font-bold text-gray-800">{currentMonth.toLocaleDateString('en-HK', { month: 'long', year: 'numeric' })}</h3>
+              <button onClick={nextMonth} className="p-2 hover:bg-gray-100 rounded-full"><ChevronRight className="w-5 h-5 text-gray-600" /></button>
+            </div>
+            <div className="grid grid-cols-7 text-center mb-2">
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => <div key={d} className="text-xs font-bold text-gray-400">{d}</div>)}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-b-2xl shadow-sm border border-t-0 border-gray-100 p-4 pt-0">
+            <div className="grid grid-cols-7 gap-1">
+              {blanksArray.map(b => <div key={`blank-${b}`} className="p-2"></div>)}
+              {daysArray.map(day => {
+                const dateTimestamp = new Date(year, month, day).setHours(0,0,0,0);
+                const isSelected = selectedDate === dateTimestamp;
+                const isToday = new Date().setHours(0,0,0,0) === dateTimestamp;
+                const cardsDue = cards.filter(c => new Date(c.nextReviewDate).setHours(0,0,0,0) === dateTimestamp).length;
+
+                return (
+                  <div key={day} onClick={() => setSelectedDate(dateTimestamp)} className={`flex flex-col items-center justify-center p-2 rounded-xl cursor-pointer transition-colors min-h-[50px] ${isSelected ? 'bg-blue-600 text-white shadow-md' : 'hover:bg-blue-50 text-gray-700'} ${isToday && !isSelected ? 'ring-2 ring-blue-300' : ''}`}>
+                    <span className={`text-sm font-bold ${isSelected ? 'text-white' : ''}`}>{day}</span>
+                    {cardsDue > 0 && (
+                      <div className="flex space-x-1 mt-1">
+                        <div className={`w-1.5 h-1.5 rounded-full ${isSelected ? 'bg-white' : 'bg-red-500'}`}></div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        <div className="px-4">
+          <h3 className="text-lg font-bold text-gray-800 mb-3 flex justify-between items-center">
+            任務清單 ({new Date(selectedDate).toLocaleDateString('zh-HK', { month: 'short', day: 'numeric' })})
+            <span className="text-sm font-medium bg-blue-100 text-blue-700 px-2 py-1 rounded-lg">{cardsForSelectedDate.length} 題</span>
+          </h3>
+          
+          {cardsForSelectedDate.length === 0 ? (
+            <div className="bg-gray-50 rounded-xl p-6 text-center text-gray-500 border border-gray-100">這天沒有需要溫習的任務！</div>
+          ) : (
+            <div className="space-y-3">
+              {cardsForSelectedDate.map(card => (
+                <div key={card.id} className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm flex flex-col">
+                  <div className="flex justify-between items-start mb-2">
+                    <span className="text-xs font-bold text-blue-700 bg-blue-50 px-2 py-1 rounded-md">{card.subject}</span>
+                    <span className="text-xs font-medium text-gray-400 border px-2 py-0.5 rounded-full">{REVIEW_SYSTEMS[card.system]?.name.split(' ')[1] || '預設'}</span>
+                  </div>
+                  <p className="text-sm text-gray-800 font-medium">{card.question}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const renderSettings = () => (
+    <div className="flex flex-col h-full w-full pb-10 max-w-lg mx-auto px-4 animate-in fade-in zoom-in duration-300">
+      <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center">
+        <Settings className="w-6 h-6 mr-2 text-blue-600" /> 系統設定與備份
+      </h2>
+      
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-6">
+        <h3 className="text-lg font-bold text-gray-800 mb-2">手動備份防走失</h3>
+        <p className="text-sm text-gray-500 mb-4">
+          由於瀏覽器可能會隨機清除登入狀態，強烈建議每天溫習完，點擊下方按鈕備份進度到手機 Notes。
+        </p>
+        
+        <button 
+          onClick={handleExport}
+          className="w-full flex items-center justify-center bg-gray-900 text-white font-bold py-3.5 rounded-xl hover:bg-gray-800 transition-colors shadow-md mb-6"
+        >
+          <Download className="w-5 h-5 mr-2" /> 點擊複製所有進度 (Export)
+        </button>
+
+        <div className="border-t border-gray-100 pt-6">
+          <label className="block text-sm font-bold text-gray-700 mb-2">還原資料 (Import)</label>
+          <p className="text-xs text-gray-400 mb-3">如果資料不見了，把之前備份的代碼貼在下面，按還原即可：</p>
+          <textarea 
+            rows="4" 
+            value={importText} 
+            onChange={(e) => setImportText(e.target.value)} 
+            className="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 resize-none font-mono text-xs mb-3 text-gray-600 bg-gray-50" 
+            placeholder="在此貼上你之前備份的代碼..." 
+          />
+          <button 
+            onClick={handleImport}
+            className="w-full flex items-center justify-center bg-blue-600 text-white font-bold py-3.5 rounded-xl hover:bg-blue-700 transition-colors shadow-md"
+          >
+            <Upload className="w-5 h-5 mr-2" /> 還原我的資料 (Restore)
+          </button>
+        </div>
+      </div>
+      
+      <div className="bg-gray-50 rounded-xl p-4 border border-gray-200 text-xs text-gray-400 font-mono break-all text-center">
+        當前系統 ID: <br/>{user?.uid || '未連線'}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="bg-slate-50 min-h-screen font-sans text-gray-900 pb-20 relative">
+      {/* Toast 提示 */}
+      {toast && (
+        <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-50 bg-gray-900 text-white px-6 py-3 rounded-full font-bold shadow-xl flex items-center animate-in slide-in-from-top-5">
+          <CheckCircle className="w-5 h-5 mr-2 text-green-400" /> {toast}
+        </div>
+      )}
+
+      {/* 頂部導航 */}
+      <header className="bg-white shadow-sm sticky top-0 z-40">
+        <div className="max-w-4xl mx-auto px-4 h-16 flex items-center justify-between">
+          <h1 className="font-extrabold text-xl tracking-tight flex items-center">
+            <span className="bg-blue-600 text-white px-2 py-1 rounded-lg mr-2">DSE</span> 
+            Spaced Repetition
+          </h1>
+          <div className="text-sm font-medium text-gray-500 bg-gray-100 px-3 py-1 rounded-full flex items-center">
+            總題庫: <span className="font-bold text-blue-600 ml-1">{cards.length}</span>
+          </div>
+        </div>
+      </header>
+
+      {/* 主內容區 */}
+      <main className="max-w-4xl mx-auto pt-6 h-[calc(100vh-8rem)] overflow-y-auto">
+        {view === 'dashboard' && renderDashboard()}
+        {view === 'study' && renderStudy()}
+        {view === 'add' && renderAdd()}
+        {view === 'calendar' && renderCalendar()}
+        {view === 'analytics' && renderAnalytics()}
+        {view === 'settings' && renderSettings()}
+      </main>
+
+      {/* 底部導航欄 */}
+      <nav className="fixed bottom-0 w-full bg-white border-t border-gray-200 safe-area-pb z-30 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+        <div className="max-w-lg mx-auto flex justify-between px-2">
+          <button onClick={() => setView('dashboard')} className={`flex-1 flex flex-col items-center py-3 ${view === 'dashboard' ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}>
+            <Home className="w-6 h-6 mb-1" />
+            <span className="text-[10px] font-bold">主頁</span>
+          </button>
+          <button onClick={() => setView('calendar')} className={`flex-1 flex flex-col items-center py-3 ${view === 'calendar' ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}>
+            <CalendarIcon className="w-6 h-6 mb-1" />
+            <span className="text-[10px] font-bold">日曆</span>
+          </button>
+          <button onClick={() => setView('add')} className={`flex-1 flex flex-col items-center py-2 relative`}>
+            <div className={`absolute -top-4 bg-blue-600 text-white p-3 rounded-full shadow-lg border-4 border-slate-50 transition-transform ${view === 'add' ? 'scale-110' : 'hover:scale-105'}`}>
+              <Plus className="w-6 h-6" />
+            </div>
+            <span className={`text-[10px] font-bold mt-8 ${view === 'add' ? 'text-blue-600' : 'text-gray-400'}`}>新增</span>
+          </button>
+          <button onClick={() => setView('analytics')} className={`flex-1 flex flex-col items-center py-3 ${view === 'analytics' ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}>
+            <BarChart2 className="w-6 h-6 mb-1" />
+            <span className="text-[10px] font-bold">數據</span>
+          </button>
+          <button onClick={() => setView('settings')} className={`flex-1 flex flex-col items-center py-3 ${view === 'settings' ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}>
+            <Settings className="w-6 h-6 mb-1" />
+            <span className="text-[10px] font-bold">設定</span>
+          </button>
+        </div>
+      </nav>
+    </div>
+  );
+}
