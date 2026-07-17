@@ -17,11 +17,6 @@
   <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
-  <!-- 引入 Firebase 雲端資料庫 (V8 兼容版) -->
-  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 </head>
 <body class="bg-slate-50 overscroll-none">
   
@@ -30,27 +25,6 @@
   <!-- React 應用程式本體 -->
   <script type="text/babel">
     const { useState, useEffect } = React;
-
-    // --- Firebase 初始化 ---
-    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
-      // ⚠️ 如果你要在自己的設備上運行，請在 Firebase Console 獲取這些資料並填入
-      apiKey: "YOUR_API_KEY",
-      authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-      projectId: "YOUR_PROJECT_ID",
-      storageBucket: "YOUR_PROJECT_ID.appspot.com",
-      messagingSenderId: "YOUR_SENDER_ID",
-      appId: "YOUR_APP_ID"
-    };
-
-    let app;
-    if (!firebase.apps.length) {
-      app = firebase.initializeApp(firebaseConfig);
-    } else {
-      app = firebase.app();
-    }
-    const auth = firebase.auth();
-    const db = firebase.firestore();
-    const appId = typeof __app_id !== 'undefined' ? __app_id : 'hkdse-spaced-repetition';
 
     // 整理後的科目順序
     const SUBJECTS = ['Chinese (中文)', 'English (英文)', 'Mathematics (數學)', 'Chemistry (化學)', 'History (歷史)', 'M2'];
@@ -62,11 +36,21 @@
       macro: { id: 'macro', name: '🌍 宏觀型', intervals: [3, 14, 30], labels: ['3 天', '2 星期', '1 個月'], desc: '適合歷史等大概念，重溫整體脈絡。' }
     };
 
+    // 初始示範資料
+    const DEMO_CARDS = [
+      { id: Date.now().toString(), subject: 'Chemistry (化學)', question: 'Esterification (酯化反應) 需要什麼 conditions (條件)？', answer: '1. Concentrated sulphuric acid (濃硫酸) 作為 catalyst\n2. Heating under reflux (回流加熱)', nextReviewDate: new Date().setHours(0, 0, 0, 0), system: 'intense', currentInterval: 0 },
+      { id: (Date.now() + 1).toString(), subject: 'Mathematics (數學)', question: '什麼是 Discriminant (判別式) Δ 的公式？', answer: 'Δ = b² - 4ac', nextReviewDate: new Date().setHours(0, 0, 0, 0), system: 'standard', currentInterval: 0 }
+    ];
+
     function App() {
-      // --- 狀態管理 ---
-      const [user, setUser] = useState(null);
-      const [cards, setCards] = useState([]);
-      const [isLoading, setIsLoading] = useState(true);
+      // --- 狀態管理 (使用 LocalStorage 初始化資料) ---
+      const [cards, setCards] = useState(() => {
+        const saved = localStorage.getItem('hkdse_cards');
+        if (saved) {
+          try { return JSON.parse(saved); } catch(e) { return DEMO_CARDS; }
+        }
+        return DEMO_CARDS;
+      });
       
       const [view, setView] = useState('dashboard');
       const [studyQueue, setStudyQueue] = useState([]);
@@ -89,60 +73,19 @@
 
       const [notificationPermission, setNotificationPermission] = useState('default');
 
-      // --- Firebase Auth & Data Fetching ---
-      useEffect(() => {
-        const initAuth = async () => {
-          try {
-            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-              await auth.signInWithCustomToken(__initial_auth_token);
-            } else {
-              await auth.signInAnonymously();
-            }
-          } catch (error) {
-            console.error("Auth error:", error);
-            setIsLoading(false);
-          }
-        };
-        initAuth();
-        
-        const unsubscribe = auth.onAuthStateChanged((currentUser) => {
-          setUser(currentUser);
-          if (!currentUser) setIsLoading(false);
-        });
-        return () => unsubscribe();
-      }, []);
-
-      useEffect(() => {
-        if (!user) return;
-        
-        const cardsRef = db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection('flashcards');
-        const unsubscribe = cardsRef.onSnapshot((snapshot) => {
-          const fetchedCards = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          
-          if (snapshot.empty && !sessionStorage.getItem('demo_injected')) {
-            sessionStorage.setItem('demo_injected', 'true');
-            injectDemoCards(user.uid);
-          } else {
-            setCards(fetchedCards);
-            setIsLoading(false);
-          }
-        }, (error) => {
-          console.error("Firestore error:", error);
-          setIsLoading(false);
-        });
-        
-        return () => unsubscribe();
-      }, [user]);
-
-      const injectDemoCards = async (uid) => {
-        const demoCards = [
-          { id: Date.now().toString(), subject: 'Chemistry (化學)', question: 'Esterification (酯化反應) 需要什麼 conditions (條件)？', answer: '1. Concentrated sulphuric acid (濃硫酸) 作為 catalyst\n2. Heating under reflux (回流加熱)', nextReviewDate: new Date().setHours(0, 0, 0, 0), system: 'intense', currentInterval: 0 },
-          { id: (Date.now() + 1).toString(), subject: 'Mathematics (數學)', question: '什麼是 Discriminant (判別式) Δ 的公式？', answer: 'Δ = b² - 4ac', nextReviewDate: new Date().setHours(0, 0, 0, 0), system: 'standard', currentInterval: 0 }
-        ];
-        for (const card of demoCards) {
-          await db.collection('artifacts').doc(appId).collection('users').doc(uid).collection('flashcards').doc(card.id).set(card);
-        }
+      // --- 本地儲存邏輯 ---
+      // 這個函數會在每次資料變動時，同時更新畫面與 iPad 內部儲存
+      const updateAndSaveCards = (newCards) => {
+        setCards(newCards);
+        localStorage.setItem('hkdse_cards', JSON.stringify(newCards));
       };
+
+      // 確保第一次開啟時會存入 Demo 資料
+      useEffect(() => {
+        if (!localStorage.getItem('hkdse_cards')) {
+          localStorage.setItem('hkdse_cards', JSON.stringify(DEMO_CARDS));
+        }
+      }, []);
 
       // --- 通知與排程 ---
       useEffect(() => {
@@ -152,7 +95,7 @@
       }, []);
 
       useEffect(() => {
-        if (view === 'dashboard' && !isLoading) {
+        if (view === 'dashboard') {
           const today = new Date().setHours(0, 0, 0, 0);
           const dueCards = cards.filter(card => card.nextReviewDate <= today);
           setStudyQueue(dueCards);
@@ -162,7 +105,7 @@
             sessionStorage.setItem('notified_today', 'true');
           }
         }
-      }, [view, cards, isLoading, notificationPermission]);
+      }, [view, cards, notificationPermission]);
 
       const showToast = (msg) => {
         setToast(msg);
@@ -190,23 +133,19 @@
         }
       };
 
-      const handleExplicitReview = async (days) => {
-        if (!user) {
-          showToast('⚠️ 錯誤：雲端未連線！請確保已在程式碼中設定 Firebase 金鑰。');
-          return;
-        }
+      const handleExplicitReview = (days) => {
         const currentCard = studyQueue[currentStudyIndex];
         const nextReviewDate = new Date();
         const intervalDays = parseInt(days, 10);
         nextReviewDate.setDate(nextReviewDate.getDate() + intervalDays);
         nextReviewDate.setHours(0, 0, 0, 0);
 
-        const cardRef = db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection('flashcards').doc(currentCard.id.toString());
-        await cardRef.set({ 
-          ...currentCard, 
-          nextReviewDate: nextReviewDate.getTime(),
-          currentInterval: intervalDays 
-        });
+        const updatedCards = cards.map(c => 
+          c.id === currentCard.id 
+            ? { ...c, nextReviewDate: nextReviewDate.getTime(), currentInterval: intervalDays } 
+            : c
+        );
+        updateAndSaveCards(updatedCards);
 
         if (currentStudyIndex + 1 < studyQueue.length) {
           setCurrentStudyIndex(currentStudyIndex + 1);
@@ -218,16 +157,12 @@
         }
       };
 
-      // --- 新增與刪除 ---
-      const handleAddSingleCard = async (e) => {
+      // --- 新增與刪除 (全部改為本地操作) ---
+      const handleAddSingleCard = (e) => {
         if (e && e.preventDefault) e.preventDefault();
         
         if (!newQuestion.trim() || !newAnswer.trim()) {
           showToast('❌ 請完整填寫問題與答案！');
-          return;
-        }
-        if (!user) {
-          showToast('⚠️ 無法儲存：雲端未連線！請確保已在程式碼中設定 Firebase 金鑰。');
           return;
         }
 
@@ -241,30 +176,27 @@
           currentInterval: 0
         };
 
-        await db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection('flashcards').doc(newCard.id).set(newCard);
+        updateAndSaveCards([...cards, newCard]);
         setNewQuestion('');
         setNewAnswer('');
         showToast('✅ 成功新增 1 張卡片');
       };
 
-      const handleBatchImport = async () => {
+      const handleBatchImport = () => {
         if (!batchText.trim()) {
           showToast('❌ 請輸入要匯入的內容！');
           return;
         }
-        if (!user) {
-          showToast('⚠️ 無法儲存：雲端未連線！請確保已在程式碼中設定 Firebase 金鑰。');
-          return;
-        }
         const lines = batchText.split('\n');
         let count = 0;
+        const newCards = [];
         
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i];
           if (line.includes('---')) {
             const [q, a] = line.split('---');
             if (q.trim() && a.trim()) {
-              const newCard = {
+              newCards.push({
                 id: (Date.now() + count).toString(),
                 subject: newSubject,
                 question: q.trim(),
@@ -272,14 +204,14 @@
                 nextReviewDate: new Date().setHours(0, 0, 0, 0),
                 system: newSystem,
                 currentInterval: 0
-              };
-              await db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection('flashcards').doc(newCard.id).set(newCard);
+              });
               count++;
             }
           }
         }
         
         if (count > 0) {
+          updateAndSaveCards([...cards, ...newCards]);
           setBatchText('');
           showToast(`✅ 成功批量匯入 ${count} 張卡片！`);
           setView('dashboard');
@@ -288,9 +220,9 @@
         }
       };
 
-      const handleDeleteCard = async (cardId) => {
-        if (!user) return;
-        await db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection('flashcards').doc(cardId.toString()).delete();
+      const handleDeleteCard = (cardId) => {
+        const updatedCards = cards.filter(c => c.id !== cardId.toString());
+        updateAndSaveCards(updatedCards);
         showToast('🗑️ 卡片已刪除');
       };
 
@@ -304,7 +236,7 @@
         }).filter(stat => stat.total > 0); 
       };
 
-      // --- 備份還原 (支援 iPad 安全性) ---
+      // --- 備份還原 (依然保留，防呆使用) ---
       const handleExport = async () => {
         const dataStr = JSON.stringify(cards, null, 2);
         try {
@@ -312,7 +244,6 @@
             await navigator.clipboard.writeText(dataStr);
             showToast('✅ 備份資料已複製！請貼上到備忘錄。');
           } else {
-            // 降級方案支援舊版 iOS 瀏覽器
             const textArea = document.createElement("textarea");
             textArea.value = dataStr;
             document.body.appendChild(textArea);
@@ -327,21 +258,26 @@
         }
       };
 
-      const handleImport = async () => {
-        if (!importText.trim() || !user) return;
+      const handleImport = () => {
+        if (!importText.trim()) return;
         try {
           const importedCards = JSON.parse(importText);
           if (!Array.isArray(importedCards)) throw new Error("Format error");
           
+          // 使用 Map 合併資料，防止重複 ID
+          const cardsMap = new Map(cards.map(c => [c.id, c]));
           let count = 0;
+          
           for (const card of importedCards) {
             if (card.id && card.question && card.answer) {
-              await db.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection('flashcards').doc(card.id.toString()).set(card);
+              cardsMap.set(card.id.toString(), card);
               count++;
             }
           }
+          
+          updateAndSaveCards(Array.from(cardsMap.values()));
           setImportText('');
-          showToast(`✅ 成功還原 ${count} 張卡片！`);
+          showToast(`✅ 成功還原/合併 ${count} 張卡片！`);
           setView('dashboard');
         } catch (error) {
           showToast('❌ 匯入失敗：資料格式不正確');
@@ -349,20 +285,6 @@
       };
 
       // --- UI 組件 ---
-      if (isLoading) {
-        if (firebaseConfig.apiKey === "YOUR_API_KEY" && typeof __firebase_config === 'undefined') {
-          return (
-            <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 text-gray-800 p-8 text-center animate-in fade-in">
-              <i className="fas fa-exclamation-triangle text-red-500 text-5xl mb-4"></i>
-              <h2 className="text-2xl font-bold mb-2">需要設定資料庫</h2>
-              <p className="text-gray-600 mb-4">要在你自己的設備獨立運行，請至 Firebase 註冊並在 HTML 檔案的 <code>firebaseConfig</code> 中填入你的金鑰。</p>
-              <p className="text-sm text-gray-400">目前無法儲存資料，請返回編輯器或填入金鑰。</p>
-            </div>
-          );
-        }
-        return <div className="min-h-screen flex items-center justify-center bg-slate-50 text-blue-600 font-bold">載入雲端資料中...</div>;
-      }
-
       const renderDashboard = () => (
         <div className="flex flex-col items-center justify-center h-full space-y-6 animate-in fade-in zoom-in duration-300 w-full px-4">
           <div className="bg-white p-8 md:p-12 rounded-3xl shadow-lg text-center max-w-2xl w-full relative">
@@ -374,7 +296,7 @@
               <i className="fas fa-brain text-blue-600 text-5xl"></i>
             </div>
             <h2 className="text-3xl md:text-4xl font-bold text-gray-800 mb-4">HKDSE 記憶大師</h2>
-            <p className="text-gray-500 mb-8 text-base md:text-lg">進度已同步，專注於今天的任務即可。</p>
+            <p className="text-gray-500 mb-8 text-base md:text-lg">資料已安全儲存於本機 iPad。</p>
             
             <div className="bg-gray-50 rounded-2xl p-8 mb-8 border border-gray-100">
               <p className="text-6xl md:text-7xl font-extrabold text-blue-600 mb-4">{studyQueue.length}</p>
@@ -476,7 +398,6 @@
                 <div>
                   <label className="block text-base md:text-lg font-medium text-gray-700 mb-2">System (溫習系統選擇)</label>
                   <div className="space-y-3">
-                    {/* 這裡為了 iPad 觸控，將 div 改為 label，讓點擊範圍更標準且不會錯過點擊事件 */}
                     {Object.values(REVIEW_SYSTEMS).map(sys => (
                       <label key={sys.id} className={`flex items-start p-4 border rounded-xl cursor-pointer transition-all ${newSystem === sys.id ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-500' : 'border-gray-200 hover:bg-gray-50'}`}>
                         <input type="radio" name="system" value={sys.id} checked={newSystem === sys.id} onChange={(e) => setNewSystem(e.target.value)} className="mt-1 mr-4 w-5 h-5 text-blue-600 focus:ring-blue-500 cursor-pointer" />
@@ -661,14 +582,14 @@
             <i className="fas fa-cog text-blue-600 mr-4 text-2xl md:text-3xl"></i> 系統設定與備份
           </h2>
           <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-8 md:p-12 mb-8">
-            <h3 className="text-xl md:text-2xl font-bold text-gray-800 mb-4">手動備份防走失</h3>
-            <p className="text-base md:text-lg text-gray-500 mb-6">強烈建議每天溫習完，點擊下方按鈕備份進度到 iPad 備忘錄 (Notes)，以免資料不見。</p>
+            <h3 className="text-xl md:text-2xl font-bold text-gray-800 mb-4">本機儲存防走失</h3>
+            <p className="text-base md:text-lg text-gray-500 mb-6">雖然資料已安全儲存於 iPad 內部，但仍強烈建議定期點擊下方按鈕備份進度到 iPad 備忘錄 (Notes)，以免更換設備時遺失。</p>
             <button onClick={handleExport} className="w-full flex items-center justify-center bg-gray-900 text-white font-bold py-4 md:py-5 rounded-2xl hover:bg-gray-800 transition-colors shadow-lg mb-8 text-lg md:text-xl cursor-pointer">
               <i className="fas fa-download mr-3 text-xl pointer-events-none"></i> 點擊複製所有進度 (Export)
             </button>
             <div className="border-t border-gray-100 pt-8">
               <label className="block text-lg md:text-xl font-bold text-gray-700 mb-3">還原資料 (Import)</label>
-              <p className="text-sm md:text-base text-gray-400 mb-4">把之前備份的代碼貼在下面，按還原即可：</p>
+              <p className="text-sm md:text-base text-gray-400 mb-4">把之前備份的代碼貼在下面，按還原即可合併資料：</p>
               <textarea rows="5" value={importText} onChange={(e) => setImportText(e.target.value)} className="w-full border border-gray-300 rounded-xl p-4 md:p-5 focus:ring-2 focus:ring-blue-500 resize-none font-mono text-sm md:text-base mb-4 text-gray-600 bg-gray-50" placeholder="在此貼上你之前備份的代碼..." />
               <button onClick={handleImport} className="w-full flex items-center justify-center bg-blue-600 text-white font-bold py-4 md:py-5 rounded-2xl hover:bg-blue-700 transition-colors shadow-lg text-lg md:text-xl cursor-pointer">
                 <i className="fas fa-upload mr-3 text-xl pointer-events-none"></i> 還原我的資料 (Restore)
@@ -718,7 +639,6 @@
                 <span className="text-xs md:text-sm font-bold pointer-events-none">日曆</span>
               </button>
               
-              {/* 修改為 button 作為主要容器，確保整個區域都可觸控 */}
               <button onClick={() => setView('add')} className={`flex-1 flex flex-col items-center py-3 relative cursor-pointer`}>
                 <div className={`absolute -top-6 bg-blue-600 text-white p-4 md:p-5 rounded-full shadow-xl border-4 md:border-8 border-slate-50 transition-transform pointer-events-none ${view === 'add' ? 'scale-110' : 'hover:scale-105'}`}>
                   <i className="fas fa-plus text-2xl md:text-3xl"></i>
