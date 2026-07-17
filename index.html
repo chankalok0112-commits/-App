@@ -33,7 +33,7 @@
 
     // --- Firebase 初始化 ---
     const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
-      // ⚠️ 如果你要在自己的電腦上運行，請在 Firebase Console 獲取這些資料並填入
+      // ⚠️ 如果你要在自己的設備上運行，請在 Firebase Console 獲取這些資料並填入
       apiKey: "YOUR_API_KEY",
       authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
       projectId: "YOUR_PROJECT_ID",
@@ -171,7 +171,7 @@
 
       const requestNotificationPermission = () => {
         if (!('Notification' in window)) {
-          showToast('你的瀏覽器不支援通知功能。');
+          showToast('你的 iPad 瀏覽器不支援推播通知。');
           return;
         }
         Notification.requestPermission().then((permission) => {
@@ -286,21 +286,27 @@
         }).filter(stat => stat.total > 0); 
       };
 
-      // --- 備份還原 ---
-      const handleExport = () => {
+      // --- 備份還原 (支援 iPad 安全性) ---
+      const handleExport = async () => {
         const dataStr = JSON.stringify(cards, null, 2);
-        const textArea = document.createElement("textarea");
-        textArea.value = dataStr;
-        document.body.appendChild(textArea);
-        textArea.select();
         try {
-          document.execCommand('copy');
-          showToast('✅ 備份資料已複製！請貼上到備忘錄。');
+          if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(dataStr);
+            showToast('✅ 備份資料已複製！請貼上到備忘錄。');
+          } else {
+            // 降級方案支援舊版 iOS 瀏覽器
+            const textArea = document.createElement("textarea");
+            textArea.value = dataStr;
+            document.body.appendChild(textArea);
+            textArea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textArea);
+            showToast('✅ 備份資料已複製！請貼上到備忘錄。');
+          }
         } catch (err) {
-          showToast('❌ 自動複製失敗，請手動複製下方文字。');
+          showToast('❌ 自動複製失敗，請手動選取下方文字複製。');
           setImportText(dataStr);
         }
-        document.body.removeChild(textArea);
       };
 
       const handleImport = async () => {
@@ -342,8 +348,8 @@
       const renderDashboard = () => (
         <div className="flex flex-col items-center justify-center h-full space-y-6 animate-in fade-in zoom-in duration-300 w-full px-4">
           <div className="bg-white p-8 md:p-12 rounded-3xl shadow-lg text-center max-w-2xl w-full relative">
-            <button onClick={requestNotificationPermission} className={`absolute top-6 right-6 p-3 rounded-full transition-colors ${notificationPermission === 'granted' ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-400 hover:bg-blue-50 hover:text-blue-500'}`}>
-              <i className="fas fa-bell text-xl"></i>
+            <button onClick={requestNotificationPermission} className={`absolute top-6 right-6 p-3 rounded-full transition-colors cursor-pointer ${notificationPermission === 'granted' ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-400 hover:bg-blue-50 hover:text-blue-500'}`}>
+              <i className="fas fa-bell text-xl pointer-events-none"></i>
             </button>
 
             <div className="bg-blue-100 w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6">
@@ -357,7 +363,7 @@
               <p className="text-base md:text-lg font-medium text-gray-500">張卡片今日需溫習 (Due Today)</p>
             </div>
 
-            <button onClick={startStudying} disabled={studyQueue.length === 0} className={`w-full py-5 rounded-2xl font-bold text-white transition-all text-xl ${studyQueue.length > 0 ? 'bg-gray-900 hover:bg-gray-800 shadow-2xl transform hover:-translate-y-1' : 'bg-gray-300 cursor-not-allowed'}`}>
+            <button onClick={startStudying} disabled={studyQueue.length === 0} className={`w-full py-5 rounded-2xl font-bold text-white transition-all text-xl cursor-pointer ${studyQueue.length > 0 ? 'bg-gray-900 hover:bg-gray-800 shadow-2xl transform hover:-translate-y-1' : 'bg-gray-300 cursor-not-allowed'}`}>
               {studyQueue.length > 0 ? '開始今日溫習 (Start Studying)' : '今日任務已清空 🎉'}
             </button>
           </div>
@@ -383,7 +389,7 @@
                 <>
                   <h3 className="text-base md:text-lg font-bold text-gray-400 mb-6 uppercase tracking-wider">Question</h3>
                   <p className="text-3xl md:text-4xl font-medium text-gray-800 leading-relaxed whitespace-pre-wrap">{card.question}</p>
-                  <p className="mt-10 text-base md:text-lg text-gray-400 animate-pulse bg-gray-50 px-6 py-3 rounded-full">點擊卡片顯示答案</p>
+                  <p className="mt-10 text-base md:text-lg text-gray-400 animate-pulse bg-gray-50 px-6 py-3 rounded-full pointer-events-none">點擊卡片顯示答案</p>
                 </>
               ) : (
                 <>
@@ -401,21 +407,21 @@
                 {!showCustomInput ? (
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     {system.intervals.map((days, index) => (
-                      <button key={days} onClick={() => handleExplicitReview(days)} className="flex flex-col items-center justify-center p-5 md:p-6 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-2xl transition-colors">
-                        <span className="font-bold text-blue-700 text-lg md:text-xl whitespace-nowrap">{system.labels[index]}</span>
+                      <button key={days} onClick={() => handleExplicitReview(days)} className="flex flex-col items-center justify-center p-5 md:p-6 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-2xl transition-colors cursor-pointer">
+                        <span className="font-bold text-blue-700 text-lg md:text-xl whitespace-nowrap pointer-events-none">{system.labels[index]}</span>
                       </button>
                     ))}
-                    <button onClick={() => setShowCustomInput(true)} className="flex flex-col items-center justify-center p-5 md:p-6 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-2xl transition-colors">
-                      <i className="fas fa-clock text-gray-500 text-2xl md:text-3xl mb-2"></i>
-                      <span className="font-bold text-gray-600 text-sm md:text-base">自訂天數</span>
+                    <button onClick={() => setShowCustomInput(true)} className="flex flex-col items-center justify-center p-5 md:p-6 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-2xl transition-colors cursor-pointer">
+                      <i className="fas fa-clock text-gray-500 text-2xl md:text-3xl mb-2 pointer-events-none"></i>
+                      <span className="font-bold text-gray-600 text-sm md:text-base pointer-events-none">自訂天數</span>
                     </button>
                   </div>
                 ) : (
                   <div className="flex items-center space-x-4 bg-gray-50 p-4 rounded-2xl">
                     <input type="number" min="1" value={customDays} onChange={(e) => setCustomDays(e.target.value)} placeholder="輸入天數" className="flex-1 border border-gray-300 rounded-xl p-4 text-lg focus:ring-2 focus:ring-blue-500 focus:outline-none text-center" />
                     <span className="text-gray-600 text-lg font-medium whitespace-nowrap">天後</span>
-                    <button onClick={() => { if(customDays && !isNaN(customDays) && customDays > 0) handleExplicitReview(customDays); }} className="bg-gray-900 text-white px-8 py-4 rounded-xl font-bold text-lg hover:bg-gray-800">確定</button>
-                    <button onClick={() => setShowCustomInput(false)} className="bg-gray-200 text-gray-700 px-6 py-4 rounded-xl font-bold text-lg hover:bg-gray-300">返回</button>
+                    <button onClick={() => { if(customDays && !isNaN(customDays) && customDays > 0) handleExplicitReview(customDays); }} className="bg-gray-900 text-white px-8 py-4 rounded-xl font-bold text-lg hover:bg-gray-800 cursor-pointer">確定</button>
+                    <button onClick={() => setShowCustomInput(false)} className="bg-gray-200 text-gray-700 px-6 py-4 rounded-xl font-bold text-lg hover:bg-gray-300 cursor-pointer">返回</button>
                   </div>
                 )}
               </div>
@@ -432,11 +438,11 @@
             </h2>
 
             <div className="flex bg-gray-100 p-1.5 rounded-2xl mb-8">
-              <button onClick={() => setAddMode('single')} className={`flex-1 py-3 font-bold text-base md:text-lg rounded-xl transition-colors flex items-center justify-center ${addMode === 'single' ? 'bg-white text-blue-600 shadow' : 'text-gray-500'}`}>
-                <i className="fas fa-file-alt mr-2 text-lg"></i> 單張新增
+              <button onClick={() => setAddMode('single')} className={`flex-1 py-3 font-bold text-base md:text-lg rounded-xl transition-colors flex items-center justify-center cursor-pointer ${addMode === 'single' ? 'bg-white text-blue-600 shadow' : 'text-gray-500'}`}>
+                <i className="fas fa-file-alt mr-2 text-lg pointer-events-none"></i> 單張新增
               </button>
-              <button onClick={() => setAddMode('batch')} className={`flex-1 py-3 font-bold text-base md:text-lg rounded-xl transition-colors flex items-center justify-center ${addMode === 'batch' ? 'bg-white text-blue-600 shadow' : 'text-gray-500'}`}>
-                <i className="fas fa-list mr-2 text-lg"></i> 批量匯入
+              <button onClick={() => setAddMode('batch')} className={`flex-1 py-3 font-bold text-base md:text-lg rounded-xl transition-colors flex items-center justify-center cursor-pointer ${addMode === 'batch' ? 'bg-white text-blue-600 shadow' : 'text-gray-500'}`}>
+                <i className="fas fa-list mr-2 text-lg pointer-events-none"></i> 批量匯入
               </button>
             </div>
 
@@ -444,7 +450,7 @@
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
                 <div>
                   <label className="block text-base md:text-lg font-medium text-gray-700 mb-2">Subject (科目)</label>
-                  <select value={newSubject} onChange={(e) => setNewSubject(e.target.value)} className="w-full border border-gray-300 rounded-xl p-3 md:p-4 text-base md:text-lg focus:ring-2 focus:ring-blue-500 bg-white">
+                  <select value={newSubject} onChange={(e) => setNewSubject(e.target.value)} className="w-full border border-gray-300 rounded-xl p-3 md:p-4 text-base md:text-lg focus:ring-2 focus:ring-blue-500 bg-white cursor-pointer">
                     {SUBJECTS.map(sub => <option key={sub} value={sub}>{sub}</option>)}
                   </select>
                 </div>
@@ -452,15 +458,16 @@
                 <div>
                   <label className="block text-base md:text-lg font-medium text-gray-700 mb-2">System (溫習系統選擇)</label>
                   <div className="space-y-3">
+                    {/* 這裡為了 iPad 觸控，將 div 改為 label，讓點擊範圍更標準且不會錯過點擊事件 */}
                     {Object.values(REVIEW_SYSTEMS).map(sys => (
-                      <div key={sys.id} onClick={() => setNewSystem(sys.id)} className={`flex items-start p-4 border rounded-xl cursor-pointer transition-all ${newSystem === sys.id ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-500' : 'border-gray-200 hover:bg-gray-50'}`}>
-                        <input type="radio" checked={newSystem === sys.id} onChange={() => {}} className="mt-1 mr-4 w-5 h-5 text-blue-600 focus:ring-blue-500 cursor-pointer" />
+                      <label key={sys.id} className={`flex items-start p-4 border rounded-xl cursor-pointer transition-all ${newSystem === sys.id ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-500' : 'border-gray-200 hover:bg-gray-50'}`}>
+                        <input type="radio" name="system" value={sys.id} checked={newSystem === sys.id} onChange={(e) => setNewSystem(e.target.value)} className="mt-1 mr-4 w-5 h-5 text-blue-600 focus:ring-blue-500 cursor-pointer" />
                         <div>
                           <div className="font-bold text-gray-800 text-base md:text-lg">{sys.name}</div>
                           <div className="text-sm md:text-base text-gray-500 mt-1">{sys.desc}</div>
                           <div className="text-sm md:text-base font-semibold text-blue-600 mt-2">節奏: {sys.labels.join(' ➔ ')}</div>
                         </div>
-                      </div>
+                      </label>
                     ))}
                   </div>
                 </div>
@@ -476,7 +483,7 @@
                     <label className="block text-base md:text-lg font-medium text-gray-700 mb-2">Answer (答案)</label>
                     <textarea required rows="4" value={newAnswer} onChange={(e) => setNewAnswer(e.target.value)} className="w-full border border-gray-300 rounded-xl p-4 text-base md:text-lg focus:ring-2 focus:ring-blue-500 resize-none" placeholder="輸入答案..." />
                   </div>
-                  <button type="submit" className="w-full bg-gray-900 text-white font-bold py-4 md:py-5 text-lg md:text-xl rounded-xl hover:bg-gray-800 transition-colors shadow-lg mt-4">
+                  <button type="submit" className="w-full bg-gray-900 text-white font-bold py-4 md:py-5 text-lg md:text-xl rounded-xl hover:bg-gray-800 transition-colors shadow-lg mt-4 cursor-pointer">
                     儲存卡片 (Save)
                   </button>
                 </form>
@@ -487,7 +494,7 @@
                     <p>請使用 <strong className="text-xl px-1">---</strong> 分隔問題與答案，每組一列。<br/><span className="text-sm md:text-base text-blue-600 mt-2 block">範例：<br/>什麼是 GDP？ --- 國內生產總值<br/>Esterification 的催化劑？ --- 濃硫酸</span></p>
                   </div>
                   <textarea rows="8" value={batchText} onChange={(e) => setBatchText(e.target.value)} className="w-full border border-gray-300 rounded-xl p-4 text-base md:text-lg focus:ring-2 focus:ring-blue-500 resize-none font-mono" placeholder="問題 1 --- 答案 1&#10;問題 2 --- 答案 2" />
-                  <button onClick={handleBatchImport} className="w-full bg-blue-600 text-white font-bold py-4 md:py-5 text-lg md:text-xl rounded-xl hover:bg-blue-700 transition-colors shadow-lg">
+                  <button onClick={handleBatchImport} className="w-full bg-blue-600 text-white font-bold py-4 md:py-5 text-lg md:text-xl rounded-xl hover:bg-blue-700 transition-colors shadow-lg cursor-pointer">
                     一鍵批量匯入 (Batch Import)
                   </button>
                 </div>
@@ -536,8 +543,8 @@
                          <span className="text-sm md:text-base text-blue-600 font-bold bg-blue-100 px-3 py-1 rounded-md mr-3">{card.subject.split(' ')[0]}</span>
                          <span className="text-base md:text-lg text-gray-700">{card.question}</span>
                        </div>
-                       <button onClick={() => handleDeleteCard(card.id)} className="p-3 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors">
-                         <i className="fas fa-trash-alt text-lg"></i>
+                       <button onClick={() => handleDeleteCard(card.id)} className="p-3 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors cursor-pointer">
+                         <i className="fas fa-trash-alt text-lg pointer-events-none"></i>
                        </button>
                      </div>
                    ))
@@ -570,9 +577,9 @@
               <div className="w-full">
                 <div className="bg-white rounded-t-3xl shadow-sm border border-gray-100 p-6 pb-0">
                   <div className="flex justify-between items-center mb-6">
-                    <button onClick={prevMonth} className="p-3 hover:bg-gray-100 rounded-full"><i className="fas fa-chevron-left text-gray-600 text-xl"></i></button>
+                    <button onClick={prevMonth} className="p-3 hover:bg-gray-100 rounded-full cursor-pointer"><i className="fas fa-chevron-left text-gray-600 text-xl pointer-events-none"></i></button>
                     <h3 className="text-xl md:text-2xl font-bold text-gray-800">{currentMonth.toLocaleDateString('en-HK', { month: 'long', year: 'numeric' })}</h3>
-                    <button onClick={nextMonth} className="p-3 hover:bg-gray-100 rounded-full"><i className="fas fa-chevron-right text-gray-600 text-xl"></i></button>
+                    <button onClick={nextMonth} className="p-3 hover:bg-gray-100 rounded-full cursor-pointer"><i className="fas fa-chevron-right text-gray-600 text-xl pointer-events-none"></i></button>
                   </div>
                   <div className="grid grid-cols-7 text-center mb-3">
                     {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => <div key={d} className="text-sm font-bold text-gray-400">{d}</div>)}
@@ -589,9 +596,9 @@
 
                       return (
                         <div key={day} onClick={() => setSelectedDate(dateTimestamp)} className={`flex flex-col items-center justify-center p-3 md:p-4 rounded-2xl cursor-pointer transition-colors min-h-[60px] md:min-h-[70px] ${isSelected ? 'bg-blue-600 text-white shadow-lg' : 'hover:bg-blue-50 text-gray-700 bg-gray-50'} ${isToday && !isSelected ? 'ring-2 ring-blue-300' : ''}`}>
-                          <span className={`text-base md:text-lg font-bold ${isSelected ? 'text-white' : ''}`}>{day}</span>
+                          <span className={`text-base md:text-lg font-bold pointer-events-none ${isSelected ? 'text-white' : ''}`}>{day}</span>
                           {cardsDue > 0 && (
-                            <div className="flex space-x-1.5 mt-2">
+                            <div className="flex space-x-1.5 mt-2 pointer-events-none">
                               <div className={`w-2 h-2 rounded-full ${isSelected ? 'bg-white' : 'bg-red-500'}`}></div>
                             </div>
                           )}
@@ -613,7 +620,7 @@
                 ) : (
                   <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2">
                     {cardsForSelectedDate.map(card => (
-                      <div key={card.id} className="bg-white p-5 md:p-6 rounded-2xl border border-gray-200 shadow-sm flex flex-col hover:border-blue-300 transition-colors">
+                      <div key={card.id} className="bg-white p-5 md:p-6 rounded-2xl border border-gray-200 shadow-sm flex flex-col hover:border-blue-300 transition-colors cursor-pointer">
                         <div className="flex justify-between items-start mb-3">
                           <span className="text-sm md:text-base font-bold text-blue-700 bg-blue-50 px-3 py-1 rounded-lg">{card.subject}</span>
                           <span className="text-sm md:text-base font-medium text-gray-400 border px-3 py-1 rounded-full">{REVIEW_SYSTEMS[card.system]?.name.split(' ')[1] || '預設'}</span>
@@ -638,15 +645,15 @@
           <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-8 md:p-12 mb-8">
             <h3 className="text-xl md:text-2xl font-bold text-gray-800 mb-4">手動備份防走失</h3>
             <p className="text-base md:text-lg text-gray-500 mb-6">強烈建議每天溫習完，點擊下方按鈕備份進度到 iPad 備忘錄 (Notes)，以免資料不見。</p>
-            <button onClick={handleExport} className="w-full flex items-center justify-center bg-gray-900 text-white font-bold py-4 md:py-5 rounded-2xl hover:bg-gray-800 transition-colors shadow-lg mb-8 text-lg md:text-xl">
-              <i className="fas fa-download mr-3 text-xl"></i> 點擊複製所有進度 (Export)
+            <button onClick={handleExport} className="w-full flex items-center justify-center bg-gray-900 text-white font-bold py-4 md:py-5 rounded-2xl hover:bg-gray-800 transition-colors shadow-lg mb-8 text-lg md:text-xl cursor-pointer">
+              <i className="fas fa-download mr-3 text-xl pointer-events-none"></i> 點擊複製所有進度 (Export)
             </button>
             <div className="border-t border-gray-100 pt-8">
               <label className="block text-lg md:text-xl font-bold text-gray-700 mb-3">還原資料 (Import)</label>
               <p className="text-sm md:text-base text-gray-400 mb-4">把之前備份的代碼貼在下面，按還原即可：</p>
               <textarea rows="5" value={importText} onChange={(e) => setImportText(e.target.value)} className="w-full border border-gray-300 rounded-xl p-4 md:p-5 focus:ring-2 focus:ring-blue-500 resize-none font-mono text-sm md:text-base mb-4 text-gray-600 bg-gray-50" placeholder="在此貼上你之前備份的代碼..." />
-              <button onClick={handleImport} className="w-full flex items-center justify-center bg-blue-600 text-white font-bold py-4 md:py-5 rounded-2xl hover:bg-blue-700 transition-colors shadow-lg text-lg md:text-xl">
-                <i className="fas fa-upload mr-3 text-xl"></i> 還原我的資料 (Restore)
+              <button onClick={handleImport} className="w-full flex items-center justify-center bg-blue-600 text-white font-bold py-4 md:py-5 rounded-2xl hover:bg-blue-700 transition-colors shadow-lg text-lg md:text-xl cursor-pointer">
+                <i className="fas fa-upload mr-3 text-xl pointer-events-none"></i> 還原我的資料 (Restore)
               </button>
             </div>
           </div>
@@ -684,27 +691,30 @@
 
           <nav className="fixed bottom-0 w-full bg-white border-t border-gray-200 z-50 shadow-[0_-10px_20px_-5px_rgba(0,0,0,0.05)] pb-safe">
             <div className="w-full max-w-3xl mx-auto flex justify-between px-4">
-              <button onClick={() => setView('dashboard')} className={`flex-1 flex flex-col items-center py-4 ${view === 'dashboard' ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}>
-                <i className="fas fa-home text-2xl md:text-3xl mb-2"></i>
-                <span className="text-xs md:text-sm font-bold">主頁</span>
+              <button onClick={() => setView('dashboard')} className={`flex-1 flex flex-col items-center py-4 cursor-pointer ${view === 'dashboard' ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}>
+                <i className="fas fa-home text-2xl md:text-3xl mb-2 pointer-events-none"></i>
+                <span className="text-xs md:text-sm font-bold pointer-events-none">主頁</span>
               </button>
-              <button onClick={() => setView('calendar')} className={`flex-1 flex flex-col items-center py-4 ${view === 'calendar' ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}>
-                <i className="fas fa-calendar-alt text-2xl md:text-3xl mb-2"></i>
-                <span className="text-xs md:text-sm font-bold">日曆</span>
+              <button onClick={() => setView('calendar')} className={`flex-1 flex flex-col items-center py-4 cursor-pointer ${view === 'calendar' ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}>
+                <i className="fas fa-calendar-alt text-2xl md:text-3xl mb-2 pointer-events-none"></i>
+                <span className="text-xs md:text-sm font-bold pointer-events-none">日曆</span>
               </button>
-              <button onClick={() => setView('add')} className={`flex-1 flex flex-col items-center py-3 relative`}>
-                <div className={`absolute -top-6 bg-blue-600 text-white p-4 md:p-5 rounded-full shadow-xl border-4 md:border-8 border-slate-50 transition-transform ${view === 'add' ? 'scale-110' : 'hover:scale-105'}`}>
+              
+              {/* 修改為 button 作為主要容器，確保整個區域都可觸控 */}
+              <button onClick={() => setView('add')} className={`flex-1 flex flex-col items-center py-3 relative cursor-pointer`}>
+                <div className={`absolute -top-6 bg-blue-600 text-white p-4 md:p-5 rounded-full shadow-xl border-4 md:border-8 border-slate-50 transition-transform pointer-events-none ${view === 'add' ? 'scale-110' : 'hover:scale-105'}`}>
                   <i className="fas fa-plus text-2xl md:text-3xl"></i>
                 </div>
-                <span className={`text-xs md:text-sm font-bold mt-10 md:mt-12 ${view === 'add' ? 'text-blue-600' : 'text-gray-400'}`}>新增</span>
+                <span className={`text-xs md:text-sm font-bold mt-10 md:mt-12 pointer-events-none ${view === 'add' ? 'text-blue-600' : 'text-gray-400'}`}>新增</span>
               </button>
-              <button onClick={() => setView('analytics')} className={`flex-1 flex flex-col items-center py-4 ${view === 'analytics' ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}>
-                <i className="fas fa-chart-bar text-2xl md:text-3xl mb-2"></i>
-                <span className="text-xs md:text-sm font-bold">數據</span>
+              
+              <button onClick={() => setView('analytics')} className={`flex-1 flex flex-col items-center py-4 cursor-pointer ${view === 'analytics' ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}>
+                <i className="fas fa-chart-bar text-2xl md:text-3xl mb-2 pointer-events-none"></i>
+                <span className="text-xs md:text-sm font-bold pointer-events-none">數據</span>
               </button>
-              <button onClick={() => setView('settings')} className={`flex-1 flex flex-col items-center py-4 ${view === 'settings' ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}>
-                <i className="fas fa-cog text-2xl md:text-3xl mb-2"></i>
-                <span className="text-xs md:text-sm font-bold">設定</span>
+              <button onClick={() => setView('settings')} className={`flex-1 flex flex-col items-center py-4 cursor-pointer ${view === 'settings' ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}>
+                <i className="fas fa-cog text-2xl md:text-3xl mb-2 pointer-events-none"></i>
+                <span className="text-xs md:text-sm font-bold pointer-events-none">設定</span>
               </button>
             </div>
           </nav>
