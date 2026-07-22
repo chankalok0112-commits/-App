@@ -45,6 +45,7 @@
       
       const [view, setView] = useState('dashboard');
       const [studyQueue, setStudyQueue] = useState([]);
+      const [selectedStudyCard, setSelectedStudyCard] = useState(null);
       const [currentStudyIndex, setCurrentStudyIndex] = useState(0);
       const [isFlipped, setIsFlipped] = useState(false);
       const [showCustomInput, setShowCustomInput] = useState(false);
@@ -149,37 +150,30 @@
       };
 
       // --- 學習邏輯 ---
-      const startStudying = () => {
-        if (studyQueue.length > 0) {
-          setCurrentStudyIndex(0);
-          setIsFlipped(false);
-          setShowCustomInput(false);
-          setView('study');
-        }
+      const startStudying = (card) => {
+        setSelectedStudyCard(card);
+        setIsFlipped(false);
+        setShowCustomInput(false);
+        setView('study');
       };
 
       const handleExplicitReview = (days) => {
-        const currentCard = studyQueue[currentStudyIndex];
+        if (!selectedStudyCard) return;
         // 以「邏輯上的今天」為基準加上天數
         const nextReviewDate = new Date(getLogicalToday());
         const intervalDays = parseInt(days, 10);
         nextReviewDate.setDate(nextReviewDate.getDate() + intervalDays);
 
         const updatedCards = cards.map(c => 
-          c.id === currentCard.id 
+          c.id === selectedStudyCard.id 
             ? { ...c, nextReviewDate: nextReviewDate.getTime(), currentInterval: intervalDays } 
             : c
         );
         updateAndSaveCards(updatedCards);
 
-        if (currentStudyIndex + 1 < studyQueue.length) {
-          setCurrentStudyIndex(currentStudyIndex + 1);
-          setIsFlipped(false);
-          setShowCustomInput(false);
-        } else {
-          setView('dashboard');
-          showToast('🎉 恭喜完成今日溫習任務！');
-        }
+        setSelectedStudyCard(null);
+        setView('dashboard');
+        showToast('🎉 課題進度已標記延後！');
       };
 
       // --- 新增與刪除 ---
@@ -310,38 +304,72 @@
 
       // --- UI 組件 ---
       const renderDashboard = () => (
-        <div className="flex flex-col items-center justify-center h-full space-y-6 animate-in fade-in zoom-in duration-300 w-full px-4">
-          <div className="bg-white p-8 md:p-12 rounded-3xl shadow-lg text-center max-w-2xl w-full relative">
+        <div className="flex flex-col items-center justify-start h-full space-y-6 animate-in fade-in zoom-in duration-300 w-full px-4 pt-4 md:pt-10">
+          <div className="bg-white p-6 md:p-10 rounded-3xl shadow-lg w-full max-w-2xl relative">
             <button onClick={requestNotificationPermission} className={`absolute top-6 right-6 p-3 rounded-full transition-colors cursor-pointer ${notificationPermission === 'granted' ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-400 hover:bg-blue-50 hover:text-blue-500'}`}>
               <i className="fas fa-bell text-xl pointer-events-none"></i>
             </button>
 
-            <div className="bg-blue-100 w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6">
-              <i className="fas fa-brain text-blue-600 text-5xl"></i>
+            <div className="flex items-center space-x-4 mb-6">
+              <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center shrink-0">
+                <i className="fas fa-book-open text-blue-600 text-3xl"></i>
+              </div>
+              <div className="text-left">
+                <h2 className="text-2xl md:text-3xl font-bold text-gray-800">課題溫習清單</h2>
+                <p className="text-gray-500 text-sm md:text-base">選擇你現在想標記溫習的 Part</p>
+              </div>
             </div>
-            <h2 className="text-3xl md:text-4xl font-bold text-gray-800 mb-4">HKDSE 記憶大師</h2>
-            <p className="text-gray-500 mb-8 text-base md:text-lg">資料已安全儲存於本機 iPad。</p>
             
-            <div className="bg-gray-50 rounded-2xl p-8 mb-8 border border-gray-100">
-              <p className="text-6xl md:text-7xl font-extrabold text-blue-600 mb-4">{studyQueue.length}</p>
-              <p className="text-base md:text-lg font-medium text-gray-500">張卡片今日需溫習 (Due Today)</p>
+            <div className="bg-gray-50 rounded-2xl p-6 mb-6 border border-gray-100 flex justify-between items-center">
+              <div>
+                <p className="text-sm font-bold text-gray-500 mb-1">今日待辦 (Due Today)</p>
+                <p className="text-4xl md:text-5xl font-extrabold text-blue-600">{studyQueue.length} <span className="text-xl text-gray-400 font-medium">個課題</span></p>
+              </div>
+              {studyQueue.length === 0 && <i className="fas fa-check-circle text-5xl text-green-400 opacity-50"></i>}
             </div>
 
-            <button onClick={startStudying} disabled={studyQueue.length === 0} className={`w-full py-5 rounded-2xl font-bold text-white transition-all text-xl cursor-pointer ${studyQueue.length > 0 ? 'bg-gray-900 hover:bg-gray-800 shadow-2xl transform hover:-translate-y-1' : 'bg-gray-300 cursor-not-allowed'}`}>
-              {studyQueue.length > 0 ? '開始今日溫習 (Start Studying)' : '今日任務已清空 🎉'}
-            </button>
+            {studyQueue.length > 0 ? (
+              <div className="text-left">
+                <h3 className="text-sm font-bold text-gray-500 mb-3 ml-2 uppercase tracking-wider">點擊下方課題開始 👇</h3>
+                <div className="space-y-3 max-h-[40vh] overflow-y-auto pr-2 pb-4">
+                  {studyQueue.map(card => (
+                    <button 
+                      key={card.id}
+                      onClick={() => startStudying(card)}
+                      className="w-full text-left bg-white border-2 border-gray-100 hover:border-blue-400 hover:shadow-md p-4 md:p-5 rounded-2xl transition-all cursor-pointer group flex flex-col"
+                    >
+                      <div className="flex justify-between items-start mb-2 w-full">
+                        <span className="text-xs md:text-sm font-bold text-blue-700 bg-blue-50 px-3 py-1 rounded-lg">{card.subject}</span>
+                        <i className="fas fa-chevron-right text-gray-300 group-hover:text-blue-500 transition-colors mt-1"></i>
+                      </div>
+                      <p className="font-bold text-gray-800 text-base md:text-lg line-clamp-2 w-full">{card.question}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="bg-green-50 text-green-700 p-6 rounded-2xl border border-green-200 text-center font-bold text-lg md:text-xl mt-4">
+                今日任務已全部清空 🎉<br/><span className="text-sm font-medium mt-2 block text-green-600">去休息一下，或者到「新增」加入新課題！</span>
+              </div>
+            )}
           </div>
         </div>
       );
 
       const renderStudy = () => {
-        const card = studyQueue[currentStudyIndex];
+        const card = selectedStudyCard;
+        if (!card) return null;
         const system = REVIEW_SYSTEMS[card.system] || REVIEW_SYSTEMS.standard;
 
         return (
-          <div className="flex flex-col items-center justify-center h-full max-w-4xl mx-auto px-4 pb-10 w-full">
+          <div className="flex flex-col items-center justify-start h-full max-w-4xl mx-auto px-4 pb-10 w-full pt-4 md:pt-10">
             <div className="w-full flex justify-between items-center mb-6 text-gray-500 px-2">
-              <span className="font-medium text-lg md:text-xl">進度: {currentStudyIndex + 1} / {studyQueue.length}</span>
+              <button 
+                onClick={() => setView('dashboard')}
+                className="flex items-center text-blue-600 hover:text-blue-800 font-bold bg-blue-50 hover:bg-blue-100 px-4 py-2 rounded-xl transition-colors cursor-pointer"
+              >
+                <i className="fas fa-arrow-left mr-2 pointer-events-none"></i> 返回清單
+              </button>
               <div className="flex space-x-3">
                 <span className="bg-blue-100 text-blue-700 px-4 py-1.5 rounded-full text-sm md:text-base font-bold">{card.subject}</span>
                 <span className="bg-gray-100 text-gray-600 px-4 py-1.5 rounded-full text-sm md:text-base font-bold">{system.name.split(' ')[1]}</span>
@@ -351,13 +379,13 @@
             <div className={`w-full min-h-[350px] md:min-h-[400px] bg-white rounded-3xl shadow-xl p-8 md:p-12 flex flex-col justify-center items-center text-center cursor-pointer transition-all duration-300 transform ${isFlipped ? 'rotate-0' : ''}`} onClick={() => !isFlipped && setIsFlipped(true)}>
               {!isFlipped ? (
                 <>
-                  <h3 className="text-base md:text-lg font-bold text-gray-400 mb-6 uppercase tracking-wider">Question</h3>
+                  <h3 className="text-base md:text-lg font-bold text-gray-400 mb-6 uppercase tracking-wider">Topic / 待溫習課題</h3>
                   <p className="text-3xl md:text-4xl font-medium text-gray-800 leading-relaxed whitespace-pre-wrap">{card.question}</p>
-                  <p className="mt-10 text-base md:text-lg text-gray-400 animate-pulse bg-gray-50 px-6 py-3 rounded-full pointer-events-none">點擊卡片顯示答案</p>
+                  <p className="mt-10 text-base md:text-lg text-gray-400 animate-pulse bg-gray-50 px-6 py-3 rounded-full pointer-events-none">點擊顯示詳情 / 標記完成</p>
                 </>
               ) : (
                 <>
-                  <h3 className="text-base md:text-lg font-bold text-green-500 mb-6 uppercase tracking-wider">Answer</h3>
+                  <h3 className="text-base md:text-lg font-bold text-green-500 mb-6 uppercase tracking-wider">Details / 詳情</h3>
                   <p className="text-2xl md:text-3xl font-medium text-gray-800 leading-relaxed whitespace-pre-wrap">{card.answer}</p>
                 </>
               )}
